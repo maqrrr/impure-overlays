@@ -35,7 +35,7 @@
         }:
         let
           # find all the user's overlay packages from directory contents
-          localOverlays =
+          localOverlays = (
             if overlaysPath != false && builtins.pathExists overlaysPath
             then
               builtins.attrNames
@@ -45,20 +45,27 @@
                     (builtins.readDir overlaysPath))
                 )
             else
-              [ ];
+              [ ]
+          );
 
           # build an overlay for any packages found in the directory
-          overlays.default = (_: prev: (
-            lib.genAttrs localOverlays (name:
-              prev.${name}.overrideAttrs (oA:
-                let
-                  versionSuffix = if prev.${name}.src.name == "source" then "-${oA.version}" else "";
-                  srcPath = /${overlaysPath}/${name}/${srcToDir prev.${name}.src}${versionSuffix};
-                  srcAttr = if builtins.pathExists srcPath then { src = srcPath; } else { };
-                in
-                srcAttr // extraOverrideAtrs)
+          overlays.default = builtins.trace
+            (
+              if !quiet && builtins.length localOverlays > 0 then
+                "[impure-overlays] using overlay packages: ${builtins.concatStringsSep " " localOverlays}"
+              else ""
             )
-          ));
+            (_: prev: (
+              lib.genAttrs localOverlays (name:
+                prev.${name}.overrideAttrs (oA:
+                  let
+                    versionSuffix = if prev.${name}.src.name == "source" then "-${oA.version}" else "";
+                    srcPath = /${overlaysPath}/${name}/${srcToDir prev.${name}.src}${versionSuffix};
+                    srcAttr = if builtins.pathExists srcPath then { src = srcPath; } else { };
+                  in
+                  srcAttr // extraOverrideAtrs)
+              )
+            ));
 
           # internal utilities
           lib = pkgs.lib;
@@ -94,6 +101,7 @@
             # NOTE: maybe this should search upwards recursively?
             has_flake_overlay=$(\
               # see if we're installed by checking if the flake's devShells has an 'overlay' key
+              # XXX: this eval takes way too long
               nix eval --impure --expr \
               "(builtins.hasAttr \"overlay\" (builtins.getFlake \"$(pwd)\").devShells.\''${builtins.currentSystem})" \
               2> /dev/null || \
@@ -120,93 +128,80 @@
                 -c user.email="impure-overlays@example.com" \
               '';
               pkgDirName = pkg: "${overlaysDir}/${pkg.pname}";
-              unpackPkgShell = name:
-                let
-                  impureShell = pkgs'.mkShell {
-                    buildInputs = [ pkgs.git ];
-                    shellHook =
-                      let
-                        pkgDir = pkgDirName pkgs.${name};
-                        pkg = pkgs.${name};
-                      in
-                      ''
-                        # figure out source_root for our pkg version
-                        source_root=${srcToDir pkg.src}
-                        if [[ "${pkg.src.name}" == "source" ]]; then
-                          # save it in a versioned directory
-                          old_source_root=$source_root
-                          source_root=${srcToDir pkgs.${name}.src}-${pkgs.${name}.version}
+              unpackPkgShell = name: pkgs.mkShell
+                {
+                  buildInputs = [ pkgs.git ];
+                  shellHook =
+                    let
+                      pkgDir = pkgDirName pkgs.${name};
+                      pkg = pkgs.${name};
+                    in
+                    ''
+                      # figure out source_root for our pkg version
+                      source_root=${srcToDir pkg.src}
+                      if [[ "${pkg.src.name}" == "source" ]]; then
+                        # save it in a versioned directory
+                        old_source_root=$source_root
+                        source_root=${srcToDir pkgs.${name}.src}-${pkgs.${name}.version}
+                      fi
+
+                      if [ ! -d "${pkgDir}/$source_root" ]; then 
+                        # attempt to unpack
+                        pwd=$(pwd)
+                        nixpkgsOverride=$(nix flake metadata --json '.#' | jq -r '"github:/\(.locks.nodes.nixpkgs.locked | .owner)/\(.locks.nodes.nixpkgs.locked | .repo)/\(.locks.nodes.nixpkgs.locked | .rev)"' || :)
+                        ${ if !quiet then ''
+                        echo "[impure-overlays] Using nixpkgs from flake.nix ($nixpkgsOverride)" >&2
+                        '' else "" }
+
+                        # go to overlay pkg directory
+                        mkdir -p ${pkgDir}
+                        cd ${pkgDir}
+
+                        #if [ -n "$nixpkgsOverride" ]; then
+                        #  nix develop --override-flake nixpkgs "$nixpkgsOverride" -i '${nixpkgsRepo}#${name}' --unpack
+                        #else
+                          nix develop --override-flake nixpkgs "github:/NixOS/nixpkgs/${nixpkgs.rev}" -i '${nixpkgsRepo}#${name}' --unpack
+                        #fi
+                        
+                        if [ ! -d "$source_root" ]; then
+                          mv "$old_source_root" "$source_root"
                         fi
 
-                        if [ ! -d "${pkgDir}/$source_root" ]; then 
-                          # attempt to unpack
-                          pwd=$(pwd)
-                          nixpkgsOverride=$(nix flake metadata --json '.#' | jq -r '"github:/\(.locks.nodes.nixpkgs.locked | .owner)/\(.locks.nodes.nixpkgs.locked | .repo)/\(.locks.nodes.nixpkgs.locked | .rev)"' || :)
-
-                          ${ if !quiet then ''
-                          echo "[impure-overlays] Using nixpkgs from flake.nix ($nixpkgsOverride)" >&2
-                          '' else "" }
-
-                          # go to overlay pkg directory
-                          mkdir -p ${pkgDir}
-                          cd ${pkgDir}
-
-                          if [ -n "$nixpkgsOverride" ]; then
-                            nix develop --override-flake nixpkgs "$nixpkgsOverride" -i '${nixpkgsRepo}#${name}' --unpack
-                          else
-                            nix develop -i '${nixpkgsRepo}#${name}' --unpack
-                          fi
-                        
-                          if [ ! -d "$source_root" ]; then
-                            mv "$old_source_root" "$source_root"
-                          fi
-
-                          # setup git
-                          if [ ! -d ".git" ]; then
-                            # need a new repo
-                            git init -q
-                            git config commit.gpgsign false
-                            git add .
+                        # setup git
+                        if [ ! -d ".git" ]; then
+                          # need a new repo
+                          git init -q
+                          git add .
+                          git \
+                            ${gitArgs} \
+                            commit \
+                            -qm "Initial commit" \
+                            --allow-empty 
+                        else
+                          # we already have git, so just make a new commit
                             git \
                               ${gitArgs} \
                               commit \
-                              -qm "Initial commit" \
-                              --allow-empty 
-                          else
-                            # we already have git, so just make a new commit
-                              git \
-                                ${gitArgs} \
-                                commit \
-                                -qam "Added $source_root"
-                          fi
-
-                          # move back 
-                          cd - > /dev/null
-                        else
-                          echo "[impure-overlays] $source_root exists -- skipping unpack." >&2
+                              -qam "Added $source_root"
                         fi
 
-                        echo "[impure-overlays] '${name}' ready to edit: ${pkgDir}/$source_root" >&2
+                        # move back 
+                        cd - > /dev/null
+                      else
+                        echo "[impure-overlays] $source_root exists -- skipping unpack." >&2
+                      fi
 
-                        cd ${pkgDir}/$source_root
-                        exit
-                      '';
-                  };
-                  pureShell = pkgs.mkShell {
-                    shellHook = ''
-                      ${exportImpureOverlaysPath}
-                      ${setFlakePrefixBash}
-                      nix develop --impure "''${flakePrefix}${name}.unpack" "$@"
+                      echo "[impure-overlays] '${name}' ready to edit: ${pkgDir}/$source_root" >&2
+
+                      cd ${pkgDir}/$source_root
                       exit
                     '';
-                  };
-                in
-                if isPure then pureShell else impureShell;
+                };
               diffPkgShell = name: pkgs.mkShell {
                 buildInputs = [ pkgs.git ];
                 shellHook =
                   let
-                    pkgDir = pkgDirName pkgs.${name};
+                    pkgDir = pkgDirName pkgs'.${name};
                   in
                   ''
                     # go to ./overlays/pkg directory
@@ -217,7 +212,6 @@
                     source_root=${srcToDir pkgs.${name}.src}
                     if [ ! -d "$source_root" ]; then
                       echo "[impure-overlays] Could not find $source_root in $(pwd)" >&2
-                      exit 1
                     fi
 
                     # make a patch
@@ -248,7 +242,7 @@
               defaultPkgShell =
                 name:
                 let
-                  impureShell =
+                  impureShell = (
                     let
                       pkg = pkgs'.${name};
                       pkgDir = pkgDirName pkg;
@@ -257,24 +251,25 @@
                       {
                         shellHook = ''
                           # figure out source_root for our pkg version
-                          source_root=${pkgDir}/${srcToDir pkgs.${name}.src}
+                          source_root=${pkgDir}/${srcToDir pkg.src}
 
                           # unpack the source if we don't have it
                           if [ ! -d "$source_root" ]; then
                             ${setFlakePrefixBash}
-                            nix develop "''${flakePrefix}${name}.unpack" "$@"
+                            nix develop --override-input nixpkgs "github:/NixOS/nixpkgs/${nixpkgs.rev}" "''${flakePrefix}${name}.unpack" "$@"
                           else
                             echo "[impure-overlays] $source_root exists -- skipping unpack." >&2
                           fi
 
                           cd ${pkgDir}/$new_source_root
                         '';
-                      };
+                      }
+                  );
                   pureShell = pkgs.mkShell {
                     shellHook = ''
                       ${exportImpureOverlaysPath}
                       ${setFlakePrefixBash}
-                      nix develop --impure "''${flakePrefix}${name}" "$@"
+                      nix develop --override-input nixpkgs "github:/NixOS/nixpkgs/${nixpkgs.rev}" --impure "''${flakePrefix}${name}" "$@"
                       exit
                     '';
                   };
@@ -284,7 +279,7 @@
                 shellHook = ''
                   set -x
                   ${setFlakePrefixBash}
-                  nix build --impure "''${flakePrefix}${name}" "$@"
+                  nix build --override-input nixpkgs "github:/NixOS/nixpkgs/${nixpkgs.rev}" --impure "''${flakePrefix}${name}" "$@"
                   exit
                 '';
               };
@@ -298,43 +293,49 @@
 
           # re-run these 'nix run' commands impurely to take use any overlays
           # NOTE: you'd think we could use __impure to trigger this, but only passing --impure seems to make apps run impurely
-          impureApps = (attrs: (builtins.mapAttrs
-            (name: value:
-              if isPure then value // {
-                program =
-                  lib.getExe (mkScript "pure-${name}" {
+          impureApps =
+            (attrs: (lib.mapAttrsRecursiveCond
+              (as: !(as?"type" && as?"program"))
+              (path: value:
+                let
+                  name = lib.last path;
+                  appPath = builtins.concatStringsSep "." path;
+                in
+                if isPure then value // {
+                  program = lib.getExe
+                    (mkScript "pure-${name}" {
+                      text = ''
+                        ${exportImpureOverlaysPath}
+                        ${overlayNoticeBash}
+                        nix run --impure "${flakePrefix}${appPath}" "$@"
+                      '';
+                    });
+                }
+                else
+                  value
+              )
+              attrs)
+            // {
+              overlay = lib.genAttrs (builtins.attrNames pkgs) (name:
+                let
+                  pureApp = mkApp (mkScript "overlay-${name}" {
                     text = ''
                       ${exportImpureOverlaysPath}
-                      ${overlayNoticeBash}
-                      nix run --impure "${flakePrefix}${name}" "$@"
+                      ${setFlakePrefixBash}
+                      nix run --impure "''${flakePrefix}${name}" -- "$@"
+                      exit
                     '';
                   });
-              }
-              else
-                value
-            )
-            attrs)
-          // {
-            overlay = lib.genAttrs (builtins.attrNames pkgs) (name:
-              let
-                pureApp = mkApp (mkScript "overlay-${name}" {
-                  text = ''
-                    ${exportImpureOverlaysPath}
-                    ${setFlakePrefixBash}
-                    nix run --impure "''${flakePrefix}${name}" -- "$@"
-                    exit
-                  '';
-                });
-                impureApp = mkApp (mkScript "overlay-impure-${name}" {
-                  text = ''
-                    ${overlayNoticeBash}
-                    ${getExe pkgs'.${name}} "$@"
-                  '';
-                });
-              in
-              if isPure then pureApp else impureApp);
-          }
-          );
+                  impureApp = mkApp (mkScript "overlay-impure-${name}" {
+                    text = ''
+                      ${overlayNoticeBash}
+                      ${getExe pkgs'.${name}} "$@"
+                    '';
+                  });
+                in
+                if isPure then pureApp else impureApp);
+            }
+            );
         in
         {
           # XXX is this ok to do? it works but produces warnings
@@ -342,7 +343,7 @@
         } // {
           devShells.${system} = genOverlay;
           apps.${system} = (impureApps { }).overlay;
-          packages.${system} = lib.genAttrs localOverlays (name: pkgs'.${name});
+          packages.${system} = (lib.genAttrs localOverlays (name: pkgs'.${name}));
           templates = {
             default = {
               path = ./example;

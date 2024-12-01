@@ -117,20 +117,7 @@ Editing multiple dependent packages and multiple versions at once should work.
 
 When running without a flake, `nix run impure-overlays#pkg` (like `nix run nixpkgs#pkg`) should apply overlays from the local directory and run.
 
-## Development
-
-To work on this flake, clone it and add the absolute path to your registry:
-
-```bash
-cd ~/src
-git clone https://github.com/maqrrr/impure-overlays
-cd impure-overlays
-nix registry add impure-overlays $(pwd)
-```
-
-Then run tests with `./test.sh`.
-
-## Known issues
+# Known issues
 
 - Not sure if my handling of `system` is correct
 - How can I export `mkScript mkApp impureApps` as extra outputs without warnings?

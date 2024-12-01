@@ -1,0 +1,47 @@
+{
+  "nodes": {
+    "impure-overlays": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1725438015,
+        "narHash": "sha256-014CthXMnfhOqPWsD8Iz+ILdoKeQ/TJ0jMYp/xlwsN8=",
+        "owner": "maqrrr",
+        "repo": "impure-overlays",
+        "rev": "a3598ed9c1f25984c866f282e4851dcda2cf9230",
+        "type": "github"
+      },
+      "original": {
+        "id": "impure-overlays",
+        "type": "indirect"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1732749044,
+        "narHash": "sha256-T38FQOg0BV5M8FN1712fovzNakSOENEYs+CSkg31C9Y=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "0c5b4ecbed5b155b705336aa96d878e55acd8685",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-24.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "impure-overlays": "impure-overlays",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
