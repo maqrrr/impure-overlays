@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1725438015,
-        "narHash": "sha256-014CthXMnfhOqPWsD8Iz+ILdoKeQ/TJ0jMYp/xlwsN8=",
+        "lastModified": 1733042710,
+        "narHash": "sha256-yIscj3r22vwtZXqP8IvC3IZppby3Frt/l8wJq0C/lys=",
         "owner": "maqrrr",
         "repo": "impure-overlays",
-        "rev": "a3598ed9c1f25984c866f282e4851dcda2cf9230",
+        "rev": "67c42d9cc21ddc47177cccda8c630cc0829bfd2e",
         "type": "github"
       },
       "original": {

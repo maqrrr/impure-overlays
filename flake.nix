@@ -49,23 +49,17 @@
           );
 
           # build an overlay for any packages found in the directory
-          overlays.default = builtins.trace
-            (
-              if !quiet && builtins.length localOverlays > 0 then
-                "[impure-overlays] using overlay packages: ${builtins.concatStringsSep " " localOverlays}"
-              else ""
+          overlays.default = (_: prev: (
+            lib.genAttrs localOverlays (name:
+              prev.${name}.overrideAttrs (oA:
+                let
+                  versionSuffix = if prev.${name}.src.name == "source" then "-${oA.version}" else "";
+                  srcPath = /${overlaysPath}/${name}/${srcToDir prev.${name}.src}${versionSuffix};
+                  srcAttr = if builtins.pathExists srcPath then { src = srcPath; } else { };
+                in
+                srcAttr // extraOverrideAtrs)
             )
-            (_: prev: (
-              lib.genAttrs localOverlays (name:
-                prev.${name}.overrideAttrs (oA:
-                  let
-                    versionSuffix = if prev.${name}.src.name == "source" then "-${oA.version}" else "";
-                    srcPath = /${overlaysPath}/${name}/${srcToDir prev.${name}.src}${versionSuffix};
-                    srcAttr = if builtins.pathExists srcPath then { src = srcPath; } else { };
-                  in
-                  srcAttr // extraOverrideAtrs)
-              )
-            ));
+          ));
 
           # internal utilities
           lib = pkgs.lib;
